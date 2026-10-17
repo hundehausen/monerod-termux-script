@@ -1,0 +1,16 @@
+# Downloaded release archives and extracted binaries
+monero-android-armv8-v*.tar.bz2
+/monerod
+
+# Monero data directory and wallet material - never commit these
+bitmonero/
+.lmdb/
+*.keys
+*.address.txt
+
+# Editor and OS noise
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
