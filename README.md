@@ -33,10 +33,65 @@ Blockchain data is stored in `~/.bitmonero` by default; the installer does not d
 To remove it later:
 
 ```bash
-pkill monerod                     # install procps if pkill is unavailable
+monerod exit || pkill monerod     # graceful shutdown; pkill is the fallback (install procps)
 rm -f "$PREFIX/bin/monerod"
 rm -rf ~/.bitmonero               # optional: deletes the blockchain and wallet data
 ```
+
+## Flags for a phone
+
+```bash
+monerod --detach \
+  --prune-blockchain --sync-pruned-blocks \
+  --enable-dns-blocklist --no-zmq --no-igd
+```
+
+- `--prune-blockchain` stores about a third of the chain instead of all of it. Enable it on the **first** sync: on a database that is already full it only prunes logically and the files do not shrink. Switching an existing install means deleting `~/.bitmonero` and resyncing.
+- `--sync-pruned-blocks` downloads pruned blocks instead of full ones, which saves bandwidth during the initial sync. It is only useful together with `--prune-blockchain`.
+- `--enable-dns-blocklist` drops peers on Monero's dynamic DNS blocklist. It needs a resolver that passes DNSSEC records; where validation fails, `monerod` logs warnings and the list is not applied.
+- `--no-zmq` disables the ZMQ RPC server. Nothing on the phone uses it.
+- `--no-igd` turns off UPnP port mapping. Mobile networks are usually behind NAT or CGNAT, so there is no port to map and no reason to ask the router.
+
+Other defaults are sized for a desktop. These are worth changing on a phone:
+
+| Flag | Effect |
+| --- | --- |
+| `--hide-my-port` | Do not advertise your IP as a peer. Incoming connections rarely reach a phone anyway. |
+| `--max-txpool-weight 100000000` | Cap the transaction pool at 100 MB instead of the 648 MB default. |
+| `--out-peers 8 --in-peers 4` | Fewer connections and radio wake-ups. The default is 12 outgoing and unlimited incoming. |
+| `--block-sync-size 25` | Smaller sync batches mean lower peak RAM. The default is dynamic, up to 100 blocks. |
+| `--max-log-file-size 10485760 --max-log-files 3` | Keep the log at roughly 30 MB. The defaults allow ~100 MB per file with many rotated copies. |
+| `--check-updates disabled` | Let the installer handle upgrades, since that is the path that verifies signatures. The default only notifies. |
+
+
+Typing all of that on a phone keyboard gets old. Put the flags in `~/.bitmonero/bitmonero.conf` (drop the leading `--`, write `1` for switches), then start with just `monerod --detach`:
+
+```ini
+prune-blockchain=1
+sync-pruned-blocks=1
+enable-dns-blocklist=1
+no-zmq=1
+no-igd=1
+hide-my-port=1
+max-txpool-weight=100000000
+out-peers=8
+in-peers=4
+block-sync-size=25
+max-log-file-size=10485760
+max-log-files=3
+check-updates=disabled
+```
+
+### Keeping it running
+
+Android suspends background processes aggressively. Before a long sync, hold a wake lock so the CPU is not frozen when the screen turns off:
+
+```bash
+termux-wake-lock
+monerod --detach
+```
+
+Also exempt Termux from battery optimization in Android settings; the wake lock is released if the process is killed. Stop the daemon with `monerod exit` rather than `pkill` so the database closes cleanly, and keep the phone on a charger for the initial sync.
 
 ## Which build gets installed
 
