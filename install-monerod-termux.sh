@@ -2,8 +2,11 @@
 #
 # install-monerod-termux.sh
 #
-# Installs the latest Monero daemon (monerod) for 64-bit ARM Android/Termux:
-#   1. follows https://downloads.getmonero.org/cli/androidarm8 to the current tarball
+# Installs the latest Monero daemon (monerod) for 32-bit or 64-bit ARM
+# Android/Termux, choosing the build that matches the Termux userspace:
+#   1. detects ARMv7 vs ARMv8 and follows
+#      https://downloads.getmonero.org/cli/androidarm7 (or .../androidarm8)
+#      to the current tarball
 #   2. downloads it and the PGP-signed SHA256 list from getmonero.org
 #   3. verifies the PGP signature on that list with binaryFate's key
 #   4. verifies the archive checksum (refuses to install on mismatch)
@@ -11,6 +14,10 @@
 #   6. installs it as $PREFIX/bin/monerod and removes all temporary files
 #
 # Usage:  bash install-monerod-termux.sh [--force]
+#
+# The armv7/armv8 choice follows $TERMUX_ARCH (falling back to uname -m), so a
+# 32-bit Termux install on 64-bit hardware gets the armv7 build. Override it
+# with MONEROD_ARCH=armv7 or MONEROD_ARCH=armv8.
 #
 # Re-running when the latest version is already installed does nothing unless
 # --force is given. An interrupted download is kept in a cache directory
@@ -27,7 +34,6 @@ set -euo pipefail
 # shellcheck disable=SC2154  # rc is assigned by the trap itself
 trap 'rc=$?; printf "\033[1;31merror:\033[0m failure at line %s (exit %s)\n" "$LINENO" "$rc" >&2; exit "$rc"' ERR
 
-DOWNLOAD_URL="${DOWNLOAD_URL:-https://downloads.getmonero.org/cli/androidarm8}"
 HASHES_URL="${HASHES_URL:-https://www.getmonero.org/downloads/hashes.txt}"
 PGP_KEY_URL="${PGP_KEY_URL:-https://raw.githubusercontent.com/monero-project/monero/master/utils/gpg_keys/binaryfate.asc}"
 PGP_KEY_FPR="81AC591FE9C4B65C5806AFC3F0AF4D462A0BDF92" # binaryFate
@@ -74,10 +80,30 @@ retry_opts=(--retry 3 --retry-delay 2 --retry-all-errors)
 [[ -w "${PREFIX}/bin" ]] \
   || die "${PREFIX}/bin is not writable"
 
-case "$(uname -m)" in
-  aarch64|arm64) ;;
-  *) die "this build needs 64-bit ARM (aarch64), but this device reports '$(uname -m)'" ;;
+# Pick the release that matches the Termux userspace, not just the CPU: a
+# 32-bit Termux install on a 64-bit ARM device reports armv8l/armv7l from
+# uname but can only run the armv7 build, so TERMUX_ARCH wins when it is set.
+detect_arch() {
+  case "$1" in
+    aarch64|arm64)                 echo armv8 ;;
+    armv7l|armv8l|armv7|arm|armhf) echo armv7 ;;
+    *) return 1 ;;
+  esac
+}
+
+case "${MONEROD_ARCH:-auto}" in
+  auto)
+    arch="$(detect_arch "${TERMUX_ARCH:-$(uname -m)}")" \
+      || die "unsupported architecture '${TERMUX_ARCH:-$(uname -m)}' - this script needs 32-bit ARM (armv7) or 64-bit ARM (armv8)"
+    ;;
+  armv7|armv8)
+    arch="$MONEROD_ARCH"
+    ;;
+  *)
+    die "MONEROD_ARCH must be auto, armv7 or armv8 (got '$MONEROD_ARCH')"
+    ;;
 esac
+DOWNLOAD_URL="${DOWNLOAD_URL:-https://downloads.getmonero.org/cli/android${arch}}"
 
 missing=()
 for cmd in curl tar bzip2 sha256sum awk gpg; do
@@ -118,7 +144,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 # --- resolve redirect ------------------------------------------------------
-say "resolving the latest Android armv8 build"
+say "resolving the latest Android $arch build"
 if final_url="$(curl -fsSIL "${curl_opts[@]}" "${retry_opts[@]}" -o /dev/null \
     -w '%{url_effective}' "$DOWNLOAD_URL" 2>/dev/null)"; then
   :
@@ -132,9 +158,9 @@ fi
   || die "refusing non-HTTPS download URL: $final_url"
 
 archive="${final_url##*/}"
-[[ "$archive" == monero-android-armv8-v*.tar.bz2 ]] \
-  || die "unexpected archive name: $archive"
-version="${archive#monero-android-armv8-v}"
+[[ "$archive" == "monero-android-$arch-v"*.tar.bz2 ]] \
+  || die "unexpected archive name: $archive (expected a monero-android-$arch build)"
+version="${archive#monero-android-"$arch"-v}"
 version="${version%.tar.bz2}"
 say "latest version: $version"
 

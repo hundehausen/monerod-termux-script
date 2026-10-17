@@ -1,10 +1,10 @@
 # monerod-termux-script
 
-Installs the latest 64-bit ARM build of the [Monero](https://www.getmonero.org/) daemon (`monerod`) on Android via Termux, verifying the download against the project's signed checksum list before anything is installed.
+Installs the latest ARM build of the [Monero](https://www.getmonero.org/) daemon (`monerod`) on Android via Termux, verifying the download against the project's signed checksum list before anything is installed. Both the 32-bit ARMv7 and 64-bit ARMv8 builds are supported; the one matching the Termux userspace is chosen automatically.
 
 ## Requirements
 
-- 64-bit ARM Android device (`aarch64`) running [Termux](https://termux.dev/)
+- ARMv7 or ARMv8 Android device running [Termux](https://termux.dev/)
 - `curl`, `tar`, `bzip2`, `sha256sum`, `awk`, `gpg` — installed automatically with `pkg` if missing
 
 It refuses to run outside Termux (no writable `$PREFIX/bin`) or on other architectures.
@@ -38,6 +38,17 @@ rm -f "$PREFIX/bin/monerod"
 rm -rf ~/.bitmonero               # optional: deletes the blockchain and wallet data
 ```
 
+## Which build gets installed
+
+The installer picks the build for the Termux userspace, not just the CPU. A 32-bit Termux install on a 64-bit ARM device reports `armv8l` from `uname -m` but can only run the armv7 binary, so `$TERMUX_ARCH` takes precedence when it is set.
+
+| `$TERMUX_ARCH` (or `uname -m` fallback) | Build |
+| --- | --- |
+| `aarch64`, `arm64` | `androidarm8` (64-bit) |
+| `arm`, `armv7l`, `armv8l`, `armv7`, `armhf` | `androidarm7` (32-bit) |
+
+To force a variant regardless of detection, set `MONEROD_ARCH=armv7` or `MONEROD_ARCH=armv8`.
+
 ## Re-running and resuming
 
 Running the script again when the latest release is already installed exits without downloading anything; `--force` reinstalls anyway. The check compares the resolved release with the version reported by the installed `monerod`.
@@ -46,7 +57,7 @@ An interrupted download is kept in `${XDG_CACHE_HOME:-~/.cache}/monerod-termux` 
 
 ## What it does
 
-1. Resolves `https://downloads.getmonero.org/cli/androidarm8` to the current release tarball
+1. Detects whether Termux is running the 32-bit (armv7) or 64-bit (armv8) userspace and resolves the corresponding `https://downloads.getmonero.org/cli/androidarm7` or `.../androidarm8` to the current release tarball
 2. Downloads the tarball (resuming an earlier attempt) and the PGP-signed `hashes.txt` from getmonero.org
 3. Imports binaryFate's signing key and verifies its fingerprint
 4. Verifies the PGP signature over `hashes.txt`
@@ -57,7 +68,7 @@ An interrupted download is kept in `${XDG_CACHE_HOME:-~/.cache}/monerod-termux` 
 
 The script fails closed. It will not install if any of these checks fail:
 
-- **Transport.** Every request is HTTPS-only, with TLS 1.2 or newer, and redirects are held to the same rule (`--proto`/`--proto-redir`). The resolved download URL must be HTTPS and its filename must look like `monero-android-armv8-v<version>.tar.bz2`.
+- **Transport.** Every request is HTTPS-only, with TLS 1.2 or newer, and redirects are held to the same rule (`--proto`/`--proto-redir`). The resolved download URL must be HTTPS and its filename must match the detected variant, `monero-android-armv7-v<version>.tar.bz2` or `monero-android-armv8-v<version>.tar.bz2`.
 - **Key identity.** The signing key is fetched over HTTPS but only trusted if its fingerprint is exactly:
 
   ```
@@ -79,13 +90,14 @@ All are optional overrides:
 
 | Variable | Default |
 | --- | --- |
-| `DOWNLOAD_URL` | `https://downloads.getmonero.org/cli/androidarm8` |
+| `MONEROD_ARCH` | `auto` (detect from `$TERMUX_ARCH` / `uname -m`); `armv7` or `armv8` forces a variant |
+| `DOWNLOAD_URL` | the detected variant's URL, `https://downloads.getmonero.org/cli/androidarm7` or `.../androidarm8` |
 | `HASHES_URL` | `https://www.getmonero.org/downloads/hashes.txt` |
 | `PGP_KEY_URL` | `https://raw.githubusercontent.com/monero-project/monero/master/utils/gpg_keys/binaryfate.asc` |
 | `CACHE_DIR` | `${XDG_CACHE_HOME:-~/.cache}/monerod-termux` |
 | `MAX_DOWNLOAD_MB` | `512` |
 
-`DOWNLOAD_URL` can point at a specific release tarball to pin a version, or at a mirror; the HTTPS and filename checks still apply. `CACHE_DIR` is where interrupted downloads are resumed from, and `MAX_DOWNLOAD_MB` is a sanity cap on the archive size rather than a disk-space requirement.
+`DOWNLOAD_URL` can point at a specific release tarball to pin a version, or at a mirror; the HTTPS and filename checks still apply, and the filename must match the selected variant (set `MONEROD_ARCH` if you intentionally want the other one). `CACHE_DIR` is where interrupted downloads are resumed from, and `MAX_DOWNLOAD_MB` is a sanity cap on the archive size rather than a disk-space requirement.
 
 ## Scope
 
