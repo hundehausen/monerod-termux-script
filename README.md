@@ -5,7 +5,6 @@ Installs the latest 64-bit ARM build of the [Monero](https://www.getmonero.org/)
 ## Requirements
 
 - 64-bit ARM Android device (`aarch64`) running [Termux](https://termux.dev/)
-- About 250 MB of free space for the download and extraction
 - `curl`, `tar`, `bzip2`, `sha256sum`, `awk`, `gpg` — installed automatically with `pkg` if missing
 
 It refuses to run outside Termux (no writable `$PREFIX/bin`) or on other architectures.
@@ -15,7 +14,8 @@ It refuses to run outside Termux (no writable `$PREFIX/bin`) or on other archite
 ```bash
 git clone https://github.com/hundehausen/monerod-termux-script.git
 cd monerod-termux-script
-bash install-monerod-termux.sh
+bash install-monerod-termux.sh          # install or upgrade to the latest release
+bash install-monerod-termux.sh --force  # reinstall even if already current
 ```
 
 No root, no `sudo`; the binary goes to `$PREFIX/bin/monerod`, which is already on your `PATH` in Termux.
@@ -28,7 +28,7 @@ monerod --detach                     # start syncing in the background
 tail -f ~/.bitmonero/bitmonero.log   # watch sync progress
 ```
 
-Data is kept in `~/.bitmonero` by default; a full sync takes a while and needs several GB of storage.
+Blockchain data is stored in `~/.bitmonero` by default; the installer does not download it.
 
 To remove it later:
 
@@ -38,20 +38,26 @@ rm -f "$PREFIX/bin/monerod"
 rm -rf ~/.bitmonero               # optional: deletes the blockchain and wallet data
 ```
 
+## Re-running and resuming
+
+Running the script again when the latest release is already installed exits without downloading anything; `--force` reinstalls anyway. The check compares the resolved release with the version reported by the installed `monerod`.
+
+An interrupted download is kept in `${XDG_CACHE_HOME:-~/.cache}/monerod-termux` and resumed on the next run, so a dropped connection does not start the transfer over. If a resumed file turns out to be corrupt, it is discarded and downloaded from scratch. The cache is deleted after a successful install; set `CACHE_DIR` to put it elsewhere.
+
 ## What it does
 
 1. Resolves `https://downloads.getmonero.org/cli/androidarm8` to the current release tarball
-2. Downloads the tarball and the PGP-signed `hashes.txt` from getmonero.org
+2. Downloads the tarball (resuming an earlier attempt) and the PGP-signed `hashes.txt` from getmonero.org
 3. Imports binaryFate's signing key and verifies its fingerprint
 4. Verifies the PGP signature over `hashes.txt`
 5. Downloads the archive and checks it against the signed SHA256
-6. Extracts only `monerod`, installs it, and cleans up temporary files
+6. Extracts only `monerod`, verifies it runs and reports the expected version, then installs it with a rollback copy of the previous binary in reserve
 
 ## Verification notes
 
 The script fails closed. It will not install if any of these checks fail:
 
-- **Transport.** The resolved download URL must be HTTPS, and its filename must look like `monero-android-armv8-v<version>.tar.bz2`.
+- **Transport.** Every request is HTTPS-only, with TLS 1.2 or newer, and redirects are held to the same rule (`--proto`/`--proto-redir`). The resolved download URL must be HTTPS and its filename must look like `monero-android-armv8-v<version>.tar.bz2`.
 - **Key identity.** The signing key is fetched over HTTPS but only trusted if its fingerprint is exactly:
 
   ```
@@ -60,11 +66,12 @@ The script fails closed. It will not install if any of these checks fail:
 
   This is binaryFate's key, taken from `monero-project/monero/utils/gpg_keys/`. Trusting the key by fingerprint rather than by download source is what makes the HTTPS fetch of the key itself less critical.
 - **Signature.** `hashes.txt` must carry a valid signature from that key. Verification uses GnuPG's machine-readable status output, so it checks the actual signing fingerprint instead of matching log text.
-- **Checksum.** The archive's SHA256 must match the entry for that exact filename in the signed `hashes.txt`. On mismatch both hashes are printed and the script exits.
-- **Archive contents.** Only the `monerod` member is extracted. Absolute paths and members containing `..` are rejected before extraction, and the binary is written atomically (copy to a temp name, then `mv`).
+- **Checksum.** The archive's SHA256 must match the entry for that exact filename in the signed `hashes.txt`. On mismatch both hashes are printed and the script exits; a corrupt *resumed* download is deleted and retried once from scratch first.
+- **Archive contents.** Only the `monerod` member is extracted. Absolute paths and members containing `..` are rejected before extraction.
+- **Executable before install.** The extracted binary is run from a staging path next to its destination and must report the resolved version. Only then is it moved into place, with the previous binary kept as a rollback copy until the installed one has also run successfully.
 - **Missing release entry.** If `hashes.txt` has no entry for the archive yet, the release is probably still publishing and the script tells you to retry later rather than skipping verification.
 
-An isolated `GNUPGHOME` is created inside the temporary directory, so your existing keyring is never touched. The temporary directory (and any partial install file) is removed on exit, including on failure or Ctrl-C.
+An isolated `GNUPGHOME` is created inside the temporary directory, so your existing keyring is never touched. The temporary extraction directory, any staged install file, and any rollback copy are removed on exit, including on failure or Ctrl-C. An interrupted download is deliberately left in the cache so the next run can resume it.
 
 ## Environment variables
 
@@ -75,8 +82,10 @@ All are optional overrides:
 | `DOWNLOAD_URL` | `https://downloads.getmonero.org/cli/androidarm8` |
 | `HASHES_URL` | `https://www.getmonero.org/downloads/hashes.txt` |
 | `PGP_KEY_URL` | `https://raw.githubusercontent.com/monero-project/monero/master/utils/gpg_keys/binaryfate.asc` |
+| `CACHE_DIR` | `${XDG_CACHE_HOME:-~/.cache}/monerod-termux` |
+| `MAX_DOWNLOAD_MB` | `512` |
 
-`DOWNLOAD_URL` can point at a specific release tarball to pin a version, or at a mirror; the HTTPS and filename checks still apply.
+`DOWNLOAD_URL` can point at a specific release tarball to pin a version, or at a mirror; the HTTPS and filename checks still apply. `CACHE_DIR` is where interrupted downloads are resumed from, and `MAX_DOWNLOAD_MB` is a sanity cap on the archive size rather than a disk-space requirement.
 
 ## Scope
 
